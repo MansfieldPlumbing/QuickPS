@@ -1,0 +1,27 @@
+name: Verify
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  deterministic:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Verify source invariants
+        shell: pwsh
+        run: ./tests/Verify.ps1
+
+      - name: Verify geometry
+        shell: pwsh
+        run: ./tests/Geometry3D.Verify.ps1
+
+      - name: Verify camera
+        shell: pwsh
+        run: ./tests/Camera3D.Verify.ps1
