@@ -1,0 +1,7 @@
+/artifacts/
+/verification-results/
+*.zip
+*.tmp
+*.log
+.DS_Store
+Thumbs.db
