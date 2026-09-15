@@ -72,3 +72,7 @@ Generated screenshots, recordings, and verification results are local artifacts 
 ## Design boundary
 
 QuickPS provides mechanisms. It does not own an application loop, timing policy, scene manager, capability system, or resource registry. Higher-level scripts decide how to combine the pieces.
+
+## License
+
+QuickPS is available under the MIT License.
