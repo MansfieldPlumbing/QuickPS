@@ -5,11 +5,11 @@ param(
 )
 
 if ($MyInvocation.InvocationName -eq '.') {
-    throw 'CranialMath.ps1 must be invoked with &, not dot-sourced.'
+    throw 'HeadPose.ps1 must be invoked with &, not dot-sourced.'
 }
 
 $instance = [PSCustomObject]@{
-    PSTypeName         = 'QuickPS.CranialMath'
+    PSTypeName         = 'QuickPS.HeadPoseEstimator'
     SmoothAlpha        = $SmoothAlpha
     HoldTimeoutSeconds = $HoldTimeoutSeconds
     HasTracking        = $false
@@ -163,7 +163,7 @@ $instance | Add-Member ScriptMethod Solve ({
     $m[15] = 1.0
 
     [PSCustomObject]@{
-        PSTypeName     = 'QuickPS.CranialPose'
+        PSTypeName     = 'QuickPS.HeadPose'
         IsTracking     = $this.HasTracking
         ModelMatrix    = $m
         Position       = @($posX, $posY, $posZ)

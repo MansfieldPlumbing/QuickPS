@@ -39,7 +39,7 @@ if($Native){
     $brush=[Drawing.SolidBrush]::new([Drawing.Color]::Lime)
     try{$graphics.Clear([Drawing.Color]::FromArgb(4,6,15));$graphics.FillRectangle($brush,30,40,140,70);$bitmap.Save($synthetic,[Drawing.Imaging.ImageFormat]::Png)}finally{$brush.Dispose();$graphics.Dispose();$bitmap.Dispose()}
 }
-$pure=@('Verify.ps1','Geometry3D.Verify.ps1','Camera3D.Verify.ps1','CranialMath.Verify.ps1','Gallery.Verify.ps1')
+$pure=@('Verify.ps1','Geometry3D.Verify.ps1','Camera3D.Verify.ps1','HeadPose.Verify.ps1','Gallery.Verify.ps1')
 foreach($file in Get-ChildItem $PSScriptRoot -File -Filter '*.ps1' | Where-Object Name -NE 'Run-Tests.ps1' | Sort-Object Name){
     $arguments=@();$skip=''
     if($file.Name -notin $pure -and -not $Native){$skip='Requires Windows native services; pass -Native.'}

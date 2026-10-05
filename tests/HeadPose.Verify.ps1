@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param()
 $ErrorActionPreference='Stop'
-$estimate=& (Join-Path $PSScriptRoot '..\src\CranialMath.ps1') -SmoothAlpha 1
+$estimate=& (Join-Path $PSScriptRoot '..\src\HeadPose.ps1') -SmoothAlpha 1
 $keys=[pscustomobject]@{LeftEye=@(580,320);RightEye=@(700,320);Nose=@(640,406.4)}
 $result=$estimate.Solve($keys,1280,720)
 if(-not $result.IsTracking -or $result.ModelMatrix.Count -ne 16 -or $result.ModelMatrix[15] -ne 1){throw 'Estimate shape or homogeneous coordinate differs.'}
