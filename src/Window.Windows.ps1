@@ -4,7 +4,11 @@ param(
     [int] $Height = 540,
     [string] $Title = 'QuickPS Window',
     [uint32] $BackgroundColor = 0x0033CC,
+    [int] $X = 150,
+    [int] $Y = 150,
     [switch] $Borderless,
+    [switch] $Topmost,
+    [Nullable[uint32]] $TransparentColorKey,
     [switch] $Headless
 )
 
@@ -30,7 +34,11 @@ $Window = & {
         [int] $RequestedHeight,
         [string] $RequestedTitle,
         [uint32] $RequestedBackgroundColor,
-        [bool] $RequestedBorderless
+        [int] $RequestedX,
+        [int] $RequestedY,
+        [bool] $RequestedBorderless,
+        [bool] $RequestedTopmost,
+        [Nullable[uint32]] $RequestedTransparentColorKey
     )
     $assembly = [Reflection.Emit.AssemblyBuilder]::DefineDynamicAssembly(
         [Reflection.AssemblyName]::new('QuickPS.Window.' + [Guid]::NewGuid().ToString('N')),
@@ -86,11 +94,18 @@ $Window = & {
     $destroyWindow = & $bind $user32 'DestroyWindow' ([bool]) @([IntPtr])
     $showWindow = & $bind $user32 'ShowWindow' ([bool]) @([IntPtr], [int32])
     $updateWindow = & $bind $user32 'UpdateWindow' ([bool]) @([IntPtr])
-    $peekMessage = & $bind $user32 'PeekMessageW' ([bool]) @(
-        [IntPtr], [IntPtr], [uint32], [uint32], [uint32])
+    # ABI source: Windows SDK 10.0.26100.0, winuser.h. On Windows x64 MSG is 48 bytes.
+    # GetMessageW returns BOOL as a signed 32-bit value so its documented -1 error is preserved.
+    $getMessage = & $bind $user32 'GetMessageW' ([int32]) @(
+        [IntPtr], [IntPtr], [uint32], [uint32])
     $translateMessage = & $bind $user32 'TranslateMessage' ([bool]) @([IntPtr])
     $dispatchMessage = & $bind $user32 'DispatchMessageW' ([IntPtr]) @([IntPtr])
+    $postMessage = & $bind $user32 'PostMessageW' ([bool]) @(
+        [IntPtr], [uint32], [IntPtr], [IntPtr])
     $isWindow = & $bind $user32 'IsWindow' ([bool]) @([IntPtr])
+    $isChild = & $bind $user32 'IsChild' ([bool]) @([IntPtr],[IntPtr])
+    $setLayeredWindowAttributes = & $bind $user32 'SetLayeredWindowAttributes' ([bool]) @(
+        [IntPtr], [uint32], [byte], [uint32])
     $createSolidBrush = & $bind $gdi32 'CreateSolidBrush' ([IntPtr]) @([uint32])
     $deleteObject = & $bind $gdi32 'DeleteObject' ([bool]) @([IntPtr])
     $dwmSetWindowAttribute = & $bind $dwmapi 'DwmSetWindowAttribute' ([int32]) @(
@@ -131,12 +146,24 @@ $Window = & {
             if ($atom -eq 0) { throw 'RegisterClassExW failed.' }
 
             $style = if ($RequestedBorderless) { [uint32]0x80000000 } else { [uint32]0x00CF0000 }
-            $extendedStyle = if ($RequestedBorderless) { [uint32]0x00040000 } else { [uint32]0 }
+            $extendedStyle = [uint32]0
+            if ($RequestedBorderless) { $extendedStyle = $extendedStyle -bor [uint32]0x00040000 }
+            if ($RequestedTopmost) { $extendedStyle = $extendedStyle -bor [uint32]0x00000008 }
+            if ($null -ne $RequestedTransparentColorKey) { $extendedStyle = $extendedStyle -bor [uint32]0x00080000 }
             $hwnd = [IntPtr]$createWindow.DynamicInvoke(
                 $extendedStyle, $classNamePointer, $titlePointer, $style,
-                [int32]150, [int32]150, $RequestedWidth, $RequestedHeight,
+                $RequestedX, $RequestedY, $RequestedWidth, $RequestedHeight,
                 [IntPtr]::Zero, [IntPtr]::Zero, $hModule, [IntPtr]::Zero)
             if ($hwnd -eq [IntPtr]::Zero) { throw 'CreateWindowExW failed.' }
+
+            if ($null -ne $RequestedTransparentColorKey) {
+                $key = [uint32]$RequestedTransparentColorKey
+                $keyColorRef = [uint32]((($key -band 0xFF) -shl 16) -bor
+                    ($key -band 0x00FF00) -bor (($key -shr 16) -band 0xFF))
+                if (-not $setLayeredWindowAttributes.DynamicInvoke($hwnd, $keyColorRef, [byte]255, [uint32]1)) {
+                    throw 'SetLayeredWindowAttributes failed.'
+                }
+            }
         }
         catch {
             if ($atom) { [void]$unregisterClass.DynamicInvoke($classNamePointer, $hModule) }
@@ -179,16 +206,24 @@ $Window = & {
             BackgroundColor = $RequestedBackgroundColor
             Width = $RequestedWidth
             Height = $RequestedHeight
+            X = $RequestedX
+            Y = $RequestedY
             Borderless = $RequestedBorderless
+            Topmost = $RequestedTopmost
             Headless = $false
             Alive = $true
             Visible = $false
             ShowWindowCall = $showWindow
             UpdateWindowCall = $updateWindow
-            PeekMessageCall = $peekMessage
+            CreateWindowCall = $createWindow
+            SetLayeredWindowAttributesCall = $setLayeredWindowAttributes
+            GetMessageCall = $getMessage
             TranslateMessageCall = $translateMessage
             DispatchMessageCall = $dispatchMessage
+            PostMessageCall = $postMessage
             IsWindowCall = $isWindow
+            IsChildCall = $isChild
+            DwmSetWindowAttributeCall = $dwmSetWindowAttribute
             DestroyWindowCall = $destroyWindow
             UnregisterClassCall = $unregisterClass
             DeleteObjectCall = $deleteObject
@@ -201,17 +236,106 @@ $Window = & {
             $true
         }.GetNewClosure())
 
-        $instance | Add-Member ScriptMethod Pump ({
+        $instance | Add-Member ScriptMethod CreateLayeredChild ({
+            param([int]$X, [int]$Y, [int]$Width, [int]$Height,
+                [bool]$TransparentBlack = $false)
+            if ($this.Hwnd -eq [IntPtr]::Zero -or
+                -not $this.IsWindowCall.DynamicInvoke($this.Hwnd)) {
+                throw 'A live parent window is required.'
+            }
+            if ($Width -le 0 -or $Height -le 0) {
+                throw 'Layered child dimensions must be positive.'
+            }
+            # SDK 10.0.26100.0 winuser.h: WS_EX_LAYERED; WS_CHILD, WS_VISIBLE,
+            # WS_CLIPSIBLINGS; LWA_ALPHA or LWA_COLORKEY. The parent owns the child.
+            $child = [IntPtr]$this.CreateWindowCall.DynamicInvoke(
+                [uint32]0x00080000,$this.ClassNamePointer,[IntPtr]::Zero,
+                [uint32]0x54000000,[int32]$X,[int32]$Y,[int32]$Width,[int32]$Height,
+                $this.Hwnd,[IntPtr]::Zero,$this.HModule,[IntPtr]::Zero)
+            if ($child -eq [IntPtr]::Zero) { throw 'CreateWindowExW(layered child) failed.' }
+            $layerFlags = if ($TransparentBlack) { [uint32]1 } else { [uint32]2 }
+            if (-not $this.SetLayeredWindowAttributesCall.DynamicInvoke(
+                $child,[uint32]0,[byte]255,$layerFlags)) {
+                [void]$this.DestroyWindowCall.DynamicInvoke($child)
+                throw 'SetLayeredWindowAttributes(layered child) failed.'
+            }
+            $child
+        }.GetNewClosure())
+
+        $instance | Add-Member ScriptMethod SetChildCloak ({
+            param([IntPtr]$Child,[bool]$Cloak)
+            if ($Child -eq [IntPtr]::Zero -or
+                -not $this.IsChildCall.DynamicInvoke($this.Hwnd,$Child)) {
+                throw 'The window is not a child of this parent.'
+            }
+            $value = [Runtime.InteropServices.Marshal]::AllocHGlobal(4)
+            try {
+                [Runtime.InteropServices.Marshal]::WriteInt32($value,[int]$Cloak)
+                # SDK 10.0.26100.0 dwmapi.h: DWMWA_CLOAK = 13, BOOL = 4 bytes.
+                $hr = [int32]$this.DwmSetWindowAttributeCall.DynamicInvoke(
+                    $Child,[uint32]13,$value,[uint32]4)
+                if ($hr -lt 0) {
+                    throw ('DwmSetWindowAttribute(DWMWA_CLOAK) failed: 0x{0:X8}' -f [uint32]$hr)
+                }
+            } finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($value) }
+        }.GetNewClosure())
+
+        $instance | Add-Member ScriptMethod DestroyChild ({
+            param([IntPtr]$Child)
+            if ($Child -eq [IntPtr]::Zero -or
+                -not $this.IsChildCall.DynamicInvoke($this.Hwnd,$Child)) {
+                throw 'The window is not a child of this parent.'
+            }
+            if (-not $this.DestroyWindowCall.DynamicInvoke($Child)) {
+                throw 'DestroyWindow(child) failed.'
+            }
+        }.GetNewClosure())
+
+        $instance | Add-Member ScriptMethod Close ({
+            if ($this.Hwnd -eq [IntPtr]::Zero -or
+                -not $this.IsWindowCall.DynamicInvoke($this.Hwnd)) {
+                $this.Alive = $false
+                return $false
+            }
+            if (-not $this.PostMessageCall.DynamicInvoke(
+                $this.Hwnd, [uint32]0x0010, [IntPtr]::Zero, [IntPtr]::Zero)) {
+                throw 'PostMessageW(WM_CLOSE) failed.'
+            }
+            $true
+        }.GetNewClosure())
+
+        $instance | Add-Member ScriptMethod Run ({
+            param([scriptblock]$OnInput)
             $message = [Runtime.InteropServices.Marshal]::AllocHGlobal(48)
             try {
-                while ($this.PeekMessageCall.DynamicInvoke(
-                    $message, [IntPtr]::Zero, [uint32]0, [uint32]0, [uint32]1)) {
+                $this.Alive = [bool]$this.IsWindowCall.DynamicInvoke($this.Hwnd)
+                while ($this.Alive) {
+                    $result = [int32]$this.GetMessageCall.DynamicInvoke(
+                        $message, [IntPtr]::Zero, [uint32]0, [uint32]0)
+                    if ($result -eq -1) { throw 'GetMessageW failed.' }
+                    if ($result -eq 0) { break }
+                    if ($OnInput) {
+                        # MSG on Windows x64: HWND 0, UINT message 8,
+                        # WPARAM 16, LPARAM 24. Dispatch semantic input only.
+                        $messageId=[Runtime.InteropServices.Marshal]::ReadInt32($message,8)
+                        $inputEvent=$null
+                        if ($messageId -eq 0x0100) {
+                            $key=[Runtime.InteropServices.Marshal]::ReadIntPtr($message,16).ToInt32()
+                            $flags=[Runtime.InteropServices.Marshal]::ReadIntPtr($message,24).ToInt64()
+                            $inputEvent=[pscustomobject]@{Kind='KeyDown';KeyCode=$key;Repeat=($flags -band 0x40000000) -ne 0}
+                        } elseif ($messageId -eq 0x0201) {
+                            $inputEvent=[pscustomobject]@{Kind='PointerDown';Button='Left'}
+                        } elseif ($messageId -eq 0x0202) {
+                            $inputEvent=[pscustomobject]@{Kind='PointerUp';Button='Left'}
+                        }
+                        if ($inputEvent) { $null=& $OnInput $inputEvent }
+                    }
                     [void]$this.TranslateMessageCall.DynamicInvoke($message)
                     [void]$this.DispatchMessageCall.DynamicInvoke($message)
+                    $this.Alive = [bool]$this.IsWindowCall.DynamicInvoke($this.Hwnd)
                 }
             }
             finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($message) }
-            $this.Alive = [bool]$this.IsWindowCall.DynamicInvoke($this.Hwnd)
             $this.Alive
         }.GetNewClosure())
 
@@ -238,6 +362,6 @@ $Window = & {
 
         $instance
     }.GetNewClosure()
-} $Width $Height $Title $BackgroundColor ([bool]$Borderless)
+} $Width $Height $Title $BackgroundColor $X $Y ([bool]$Borderless) ([bool]$Topmost) $TransparentColorKey
 
 & $Window

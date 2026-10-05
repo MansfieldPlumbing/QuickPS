@@ -1,5 +1,5 @@
 $ErrorActionPreference='Stop'
-[void][Reflection.Assembly]::Load('System.Drawing.Common')
+[void][Runtime.Loader.AssemblyLoadContext]::Default.LoadFromAssemblyPath((Join-Path $PSHOME 'System.Drawing.Common.dll'))
 $gate=Join-Path $PSScriptRoot 'ImageSilhouette.Verify.ps1'
 $temporary=Join-Path ([IO.Path]::GetTempPath()) ('QuickPS-Silhouette-'+[Guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($temporary)|Out-Null

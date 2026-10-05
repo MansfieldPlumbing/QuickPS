@@ -77,7 +77,7 @@ try {
     }
     if ($ScreenshotPath) {
         $native = & (Join-Path $root 'Native.ps1')
-        [void][Reflection.Assembly]::Load('System.Drawing.Common')
+        [void][Runtime.Loader.AssemblyLoadContext]::Default.LoadFromAssemblyPath((Join-Path $PSHOME 'System.Drawing.Common.dll'))
         $bitmap = [Drawing.Bitmap]::new(736, 459)
         $graphics = [Drawing.Graphics]::FromImage($bitmap)
         try {
@@ -90,8 +90,7 @@ try {
         finally { $graphics.Dispose(); $bitmap.Dispose() }
     }
     [PSCustomObject]@{ Scene="QuickPS $Shape"; Vertices=$geometry.VertexCount; Indices=$geometry.IndexCount; Indexed=$true; Presented=$true; Fence=$gpu.GetCompletedValue($fence) } | Format-List
-    $until = if ($Seconds -gt 0) { [DateTime]::UtcNow.AddSeconds($Seconds) } else { [DateTime]::MaxValue }
-    while ($window.Alive -and [DateTime]::UtcNow -lt $until) { $null=$window.Pump(); [Threading.Thread]::Sleep(8) }
+    if ($Seconds -le 0) { $null = $window.Run() }
 }
 finally {
     if ($native) { $native.Dispose() }

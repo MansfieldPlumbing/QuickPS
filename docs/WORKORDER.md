@@ -15,7 +15,7 @@ QuickPS currently targets Windows. Each source file is independently invoked and
 - Use an explicit hardware-facing test for windows, presentation, capture, and audio.
 - Keep generated screenshots, recordings, logs, and verification results out of source control.
 - Preserve ABI comments that explain message behavior, COM inheritance, vtable slots, structures, constants, and teardown.
-- Do not introduce a custom bridge DLL when the operating-system ABI is directly callable.
+- Managed DLLs compiled from typed PowerShell are the intended release. Bind documented OS ABIs directly; do not introduce native wrapper DLLs or another implementation language.
 
 ## Current source
 

@@ -381,6 +381,94 @@ $D3D12 = & {
             [PSCustomObject]@{ Resource = $resource; Address = $address; Size = [uint32]$Data.Length }
         }.GetNewClosure())
 
+        $instance | Add-Member ScriptMethod CreateDynamicUploadBuffer ({
+            param([int] $SizeBytes)
+            if ($SizeBytes -le 0) { throw 'Buffer size must be positive.' }
+            $properties = & $this.Allocate 32
+            $description = & $this.Allocate 56
+            $iid = & $this.GuidBlock ([Guid]'696442be-a72e-4059-bc79-5b5c98040fad')
+            $output = & $this.Allocate ([IntPtr]::Size)
+            try {
+                # Upload heap and row-major buffer in GENERIC_READ state
+                [Runtime.InteropServices.Marshal]::WriteInt32($properties, 0, 2)
+                [Runtime.InteropServices.Marshal]::WriteInt32($properties, 12, 1)
+                [Runtime.InteropServices.Marshal]::WriteInt32($properties, 16, 1)
+                [Runtime.InteropServices.Marshal]::WriteInt32($description, 0, 1)
+                [Runtime.InteropServices.Marshal]::WriteInt64($description, 16, [int64]$SizeBytes)
+                [Runtime.InteropServices.Marshal]::WriteInt32($description, 24, 1)
+                [Runtime.InteropServices.Marshal]::WriteInt16($description, 28, 1)
+                [Runtime.InteropServices.Marshal]::WriteInt16($description, 30, 1)
+                [Runtime.InteropServices.Marshal]::WriteInt32($description, 36, 1)
+                [Runtime.InteropServices.Marshal]::WriteInt32($description, 44, 1)
+                # ID3D12Device::CreateCommittedResource is slot 27.
+                $hr = [int32](& $this.ComCall $this.Device 27 ([int32]) @(
+                    $properties, [uint32]0, $description, [uint32]0xAC3,
+                    [IntPtr]::Zero, $iid, $output
+                ) @([IntPtr], [uint32], [IntPtr], [uint32], [IntPtr], [IntPtr], [IntPtr]))
+                $resource = [Runtime.InteropServices.Marshal]::ReadIntPtr($output)
+            }
+            finally {
+                [Runtime.InteropServices.Marshal]::FreeHGlobal($properties)
+                [Runtime.InteropServices.Marshal]::FreeHGlobal($description)
+                [Runtime.InteropServices.Marshal]::FreeHGlobal($iid)
+                [Runtime.InteropServices.Marshal]::FreeHGlobal($output)
+            }
+            if ($hr -lt 0 -or $resource -eq [IntPtr]::Zero) { throw "Create dynamic upload buffer failed: $hr" }
+
+            # Persistently map pointer for zero-overhead CPU streaming
+            $mappedOut = & $this.Allocate ([IntPtr]::Size)
+            try {
+                $hr = [int32](& $this.ComCall $resource 8 ([int32]) @(
+                    [uint32]0, [IntPtr]::Zero, $mappedOut) @([uint32], [IntPtr], [IntPtr]))
+                $mapped = [Runtime.InteropServices.Marshal]::ReadIntPtr($mappedOut)
+                if ($hr -lt 0 -or $mapped -eq [IntPtr]::Zero) { throw "Map dynamic buffer failed: $hr" }
+                $address = [uint64](& $this.ComCall $resource 11 ([uint64]) @() @())
+            }
+            finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($mappedOut) }
+
+            $this.Resources.Add($resource)
+            [PSCustomObject]@{ Resource = $resource; Address = $address; Size = [uint32]$SizeBytes; MappedPointer = $mapped }
+        }.GetNewClosure())
+
+        $instance | Add-Member ScriptMethod CopyBufferToTexture ({
+            param(
+                [IntPtr] $CommandList,
+                [IntPtr] $DestinationResource,
+                [IntPtr] $SourceBufferResource,
+                [uint32] $Width,
+                [uint32] $Height,
+                [uint32] $Format = 87, # DXGI_FORMAT_B8G8R8A8_UNORM
+                [uint32] $RowPitch = ($Width * 4)
+            )
+            $dstLoc = & $this.Allocate 48
+            $srcLoc = & $this.Allocate 48
+            try {
+                # Destination: subresource index 0
+                [Runtime.InteropServices.Marshal]::WriteIntPtr($dstLoc, 0, $DestinationResource)
+                [Runtime.InteropServices.Marshal]::WriteInt32($dstLoc, 8, 0)
+                [Runtime.InteropServices.Marshal]::WriteInt32($dstLoc, 16, 0)
+
+                # Source: placed footprint
+                [Runtime.InteropServices.Marshal]::WriteIntPtr($srcLoc, 0, $SourceBufferResource)
+                [Runtime.InteropServices.Marshal]::WriteInt32($srcLoc, 8, 1)
+                [Runtime.InteropServices.Marshal]::WriteInt64($srcLoc, 16, [int64]0)
+                [Runtime.InteropServices.Marshal]::WriteInt32($srcLoc, 24, [int]$Format)
+                [Runtime.InteropServices.Marshal]::WriteInt32($srcLoc, 28, [int]$Width)
+                [Runtime.InteropServices.Marshal]::WriteInt32($srcLoc, 32, [int]$Height)
+                [Runtime.InteropServices.Marshal]::WriteInt32($srcLoc, 36, 1)
+                [Runtime.InteropServices.Marshal]::WriteInt32($srcLoc, 40, [int]$RowPitch)
+
+                # ID3D12GraphicsCommandList::CopyTextureRegion is slot 16
+                [void](& $this.ComCall $CommandList 16 ([void]) @(
+                    $dstLoc, [uint32]0, [uint32]0, [uint32]0, $srcLoc, [IntPtr]::Zero
+                ) @([IntPtr], [uint32], [uint32], [uint32], [IntPtr], [IntPtr]))
+            }
+            finally {
+                [Runtime.InteropServices.Marshal]::FreeHGlobal($dstLoc)
+                [Runtime.InteropServices.Marshal]::FreeHGlobal($srcLoc)
+            }
+        }.GetNewClosure())
+
         $instance | Add-Member ScriptMethod ResetCommandList ({
             param([IntPtr] $CommandList, [IntPtr] $Allocator)
             # ID3D12GraphicsCommandList::Reset is slot 10.
@@ -436,7 +524,7 @@ $D3D12 = & {
         }.GetNewClosure())
 
         $instance | Add-Member ScriptMethod CreateGraphicsPipeline ({
-            param([byte[]] $VertexShader, [byte[]] $PixelShader, [int32] $RenderTargetFormat = 87, [bool] $DepthEnabled = $false, [object[]] $InputLayout = @(), [uint32] $RootConstantCount = 0)
+            param([byte[]] $VertexShader, [byte[]] $PixelShader, [int32] $RenderTargetFormat = 87, [bool] $DepthEnabled = $false, [object[]] $InputLayout = @(), [uint32] $RootConstantCount = 0, [bool] $AlphaBlend = $false)
             $rootDescription = & $this.Allocate 40
             $rootParameter = if ($RootConstantCount) { & $this.Allocate 32 } else { [IntPtr]::Zero }
             $blobOut = & $this.Allocate ([IntPtr]::Size)
@@ -509,6 +597,15 @@ $D3D12 = & {
                     if ($InputLayout.Count) {
                         [Runtime.InteropServices.Marshal]::WriteIntPtr($description, 552, $elements)
                         [Runtime.InteropServices.Marshal]::WriteInt32($description, 560, $InputLayout.Count)
+                    }
+                    if ($AlphaBlend) {
+                        [Runtime.InteropServices.Marshal]::WriteInt32($description, 128, 1) # BlendEnable
+                        [Runtime.InteropServices.Marshal]::WriteInt32($description, 136, 5) # SrcBlend = SRC_ALPHA
+                        [Runtime.InteropServices.Marshal]::WriteInt32($description, 140, 6) # DestBlend = INV_SRC_ALPHA
+                        [Runtime.InteropServices.Marshal]::WriteInt32($description, 144, 1) # BlendOp = ADD
+                        [Runtime.InteropServices.Marshal]::WriteInt32($description, 148, 5) # SrcBlendAlpha = SRC_ALPHA
+                        [Runtime.InteropServices.Marshal]::WriteInt32($description, 152, 6) # DestBlendAlpha = INV_SRC_ALPHA
+                        [Runtime.InteropServices.Marshal]::WriteInt32($description, 156, 1) # BlendOpAlpha = ADD
                     }
                     # Default blend write mask, solid fill, back-face culling.
                     [Runtime.InteropServices.Marshal]::WriteByte($description, 164, 15)

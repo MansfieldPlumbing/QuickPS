@@ -147,6 +147,49 @@ $MediaFoundation = & {
             }
         }.GetNewClosure())
 
+        # SDK 10.0.26100.0: IMFAttributes::GetAllocatedString, slot 13.
+        $instance | Add-Member ScriptMethod GetString ({
+            param([IntPtr] $Attributes, [Guid] $Key)
+            if ($Attributes -eq [IntPtr]::Zero) { throw 'Attributes pointer is null.' }
+            $keyPointer = [IntPtr]::Zero
+            $stringOut = [IntPtr]::Zero
+            $lengthOut = [IntPtr]::Zero
+            $value = [IntPtr]::Zero
+            try {
+                $keyPointer = & $this.GuidBlock $Key
+                $stringOut = & $this.Allocate ([IntPtr]::Size)
+                $lengthOut = & $this.Allocate 4
+                [Runtime.InteropServices.Marshal]::WriteIntPtr($stringOut, [IntPtr]::Zero)
+                $hr = [int32](& $this.ComCall $Attributes 13 ([int32]) @($keyPointer, $stringOut, $lengthOut) @([IntPtr], [IntPtr], [IntPtr]))
+                $value = [Runtime.InteropServices.Marshal]::ReadIntPtr($stringOut)
+                if ($hr -lt 0) { throw 'IMFAttributes::GetAllocatedString failed.' }
+                $length = [Runtime.InteropServices.Marshal]::ReadInt32($lengthOut)
+                if ($length -lt 0 -or $length -gt 32768 -or $value -eq [IntPtr]::Zero) { throw 'Invalid device string.' }
+                [Runtime.InteropServices.Marshal]::PtrToStringUni($value, $length)
+            } finally {
+                if ($value -ne [IntPtr]::Zero) { [void]$this.CoTaskMemFreeCall.DynamicInvoke($value) }
+                foreach ($block in @($keyPointer, $stringOut, $lengthOut)) {
+                    if ($block -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::FreeHGlobal($block) }
+                }
+            }
+        }.GetNewClosure())
+
+        $instance | Add-Member ScriptMethod ListVideoDevices ({
+            # Enumerate descriptors only; no activation, capture, or handle transfer.
+            $devices = @($this.EnumerateVideoDevices())
+            try {
+                for ($index = 0; $index -lt $devices.Count; $index++) {
+                    [PSCustomObject]@{
+                        Index = $index
+                        Name = $this.GetString($devices[$index], [Guid]'60d0e559-52f8-4fa2-bbce-acdb34a8ec01')
+                        DeviceId = $this.GetString($devices[$index], [Guid]'58f0aad8-22bf-4f8a-bb3d-d2c4978c6e2f')
+                    }
+                }
+            } finally {
+                foreach ($device in $devices) { [void](& $this.ComCall $device 2 ([uint32]) @() @()) }
+            }
+        }.GetNewClosure())
+
         $instance | Add-Member ScriptMethod Dispose ({
             if (-not $this.Started) { return }
             $hr = [int32]$this.ShutdownCall.DynamicInvoke()

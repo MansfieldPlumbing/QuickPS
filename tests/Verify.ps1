@@ -11,7 +11,7 @@ $ErrorActionPreference = 'Stop'
 $allowedSystemDlls = [Collections.Generic.HashSet[string]]::new(
     [string[]]@(
         'advapi32.dll', 'avrt.dll', 'd2d1.dll', 'd3d11.dll', 'd3d12.dll',
-        'd3dcompiler_47.dll', 'dcomp.dll', 'dwmapi.dll', 'dxgi.dll',
+        'd3dcompiler_47.dll', 'dcomp.dll', 'dwmapi.dll', 'dwrite.dll', 'dxgi.dll',
         'gdi32.dll', 'kernel32.dll', 'mf.dll', 'mfplat.dll', 'mfreadwrite.dll',
         'mmdevapi.dll', 'ole32.dll', 'propsys.dll', 'shcore.dll',
         'user32.dll', 'windowscodecs.dll'
@@ -20,7 +20,7 @@ $allowedSystemDlls = [Collections.Generic.HashSet[string]]::new(
 
 $failures = [Collections.Generic.List[string]]::new()
 $results = [Collections.Generic.List[object]]::new()
-$binderFiles = Get-ChildItem -LiteralPath $Path -File -Filter '*.ps1' | Sort-Object Name
+$binderFiles = Get-ChildItem -LiteralPath $Path -File -Filter '*.ps1' -Recurse | Sort-Object FullName
 
 foreach ($file in $binderFiles) {
     $tokens = $null

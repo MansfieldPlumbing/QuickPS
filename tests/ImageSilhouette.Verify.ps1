@@ -5,7 +5,7 @@ param(
     [ValidateRange(0,64)][int] $ExpectedSilhouetteVoidCount = 0
 )
 $ErrorActionPreference='Stop'
-[void][Reflection.Assembly]::Load('System.Drawing.Common')
+[void][Runtime.Loader.AssemblyLoadContext]::Default.LoadFromAssemblyPath((Join-Path $PSHOME 'System.Drawing.Common.dll'))
 $bitmap=[Drawing.Bitmap]::new([IO.Path]::GetFullPath($Path))
 try {
     $left=8;$top=31;$width=$bitmap.Width-16;$height=$bitmap.Height-39

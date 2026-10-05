@@ -75,7 +75,7 @@ try {
                 $bottom = [Runtime.InteropServices.Marshal]::ReadInt32($rect, 12)
             }
             finally { $native.Free($rect) }
-            [void][Reflection.Assembly]::Load('System.Drawing.Common')
+            [void][Runtime.Loader.AssemblyLoadContext]::Default.LoadFromAssemblyPath((Join-Path $PSHOME 'System.Drawing.Common.dll'))
             $bitmap = [Drawing.Bitmap]::new($right - $left, $bottom - $top)
             $graphics = [Drawing.Graphics]::FromImage($bitmap)
             try {
@@ -95,11 +95,7 @@ try {
         finally { $native.Dispose() }
     }
 
-    $until = [DateTime]::UtcNow.AddSeconds($Seconds)
-    while ($window.Alive -and [DateTime]::UtcNow -lt $until) {
-        $null = $window.Pump()
-        [Threading.Thread]::Sleep(8)
-    }
+    if ($Seconds -le 0) { $null = $window.Run() }
 }
 finally {
     if ($gpu) { $gpu.Dispose() }

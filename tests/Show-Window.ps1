@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [int] $Milliseconds = 8000,
+    [switch] $Verify,
     [string] $Title = 'QuickPS Window Conformance',
     [uint32] $BackgroundColor = 0x0033CC
 )
@@ -19,11 +19,9 @@ $windowParameters = @{
 $window = & (Join-Path $PSScriptRoot '..\src\Window.Windows.ps1') @windowParameters
 try {
     $null = $window.Show()
-    $timer = [Diagnostics.Stopwatch]::StartNew()
-    while ($timer.ElapsedMilliseconds -lt $Milliseconds -and $window.Alive) {
-        $null = $window.Pump()
-        [Threading.Thread]::Sleep(8)
-    }
+    if ($Verify) { $null = $window.Close() }
+    $null = $window.Run()
+    if ($Verify -and $window.Alive) { throw 'Window remained alive after WM_CLOSE dispatch.' }
 }
 finally {
     $window.Dispose()

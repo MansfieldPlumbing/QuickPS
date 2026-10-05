@@ -1,78 +1,109 @@
 # QuickPS
 
-QuickPS is a collection of PowerShell graphics and native Windows building blocks written in PowerShell.
+QuickPS provides native capabilities authored in PowerShell, built into managed
+assemblies and driven from PowerShell. The release direction is a pack of DLLs
+with readable PowerShell consumers. Windows x64 is the current native target.
 
-The project binds directly to Windows exports and COM interfaces. It does not require a custom managed bridge, a C++ wrapper DLL, a renderer framework, or a global command router.
+The first persisted assembly, `QuickPS.Windows.dll`, contains native COM/event
+operations, an event-driven WASAPI capture worker and WAV peak/normalization
+logic. Existing graphics binders remain independently invoked `.ps1` files;
+their conversion into persisted assemblies is still pending. No C# compiler,
+custom native bridge, WinForms, WPF or browser UI is required.
 
-## Current scope
+## Build and package
 
-The repository currently contains working source for:
-
-- Win32 window creation and message pumping;
-- DXGI adapter and swap-chain access;
-- D3D12 device, command, resource, fence, and presentation operations;
-- runtime HLSL compilation through the Windows shader compiler;
-- DirectComposition;
-- WIC bitmap operations;
-- WASAPI capture;
-- Media Foundation device enumeration;
-- 3D camera matrices;
-- indexed box, plane, sphere, cylinder, cone, torus, and capsule geometry.
-
-The current implementation is Windows-focused. Android work and application-sized scripts are not part of this repository yet.
-
-## Use
-
-Each file under `src` is an independently invoked PowerShell building block. For example:
+Use PowerShell 7 with .NET 10 or newer. Compilation uses a digest-verified
+PSLowering source archive at commit `26fe7a864b19e70cfd6937ab062335a05fac3232`.
+The managed assembly targets the runtime used for its build; use the same
+runtime major version when loading that output.
 
 ```powershell
-$window = & .\src\Window.Windows.ps1 -Width 720 -Height 420 -Title 'QuickPS'
-$geometry = & .\src\Geometry3D.ps1 -Shape Box
+pwsh -NoProfile -File .\tools\Acquire-PSLowering.ps1
+pwsh -NoProfile -File .\tools\Build-Managed.ps1
+pwsh -NoProfile -File .\tools\Build-Backdrop.ps1
+pwsh -NoProfile -File .\tools\Package-Managed.ps1
 ```
 
-Native-backed objects expose their own operations and teardown. Callers compose returned values using ordinary PowerShell variables, scriptblocks, processes, and runspaces.
+Build output stays under ignored `build/`. The package contains the DLL in
+`lib/`, PowerShell source/consumers and a manifest. No runtime download occurs.
+`build/standalone/Backdrop.ps1` is generated from the canonical facade, theme
+and sample; it runs independently of adjacent files.
 
-The source files reject dot-sourcing so their private helper functions and state do not leak into the caller's scope.
+## Run the gallery
 
-## Try it
-
-On Windows with PowerShell 7:
+`gallery/` is the single sample directory. Double-click a `.cmd` launcher or
+invoke its adjacent `.ps1` with PowerShell 7. Launchers use script-relative
+paths, forward arguments and return the script's exit code without changing
+execution policy.
 
 ```powershell
-pwsh -NoProfile -File .\examples\Show.ps1 -Name Window
-pwsh -NoProfile -File .\tests\Scene3D.ps1 -Shape Box -Seconds 4
+pwsh -NoProfile -File .\gallery\Window.ps1
+pwsh -NoProfile -File .\gallery\Typography.ps1
+pwsh -NoProfile -File .\gallery\WindowControls.ps1
+pwsh -NoProfile -File .\gallery\Backdrop.ps1
+pwsh -NoProfile -File .\gallery\SoundRecorder.ps1
 ```
 
-The `.cmd` files under `examples` provide clickable demonstrations.
+The recorder uses native controls and a managed event-driven worker. Record,
+Pause/Resume and Stop are semantic commands; Stop signals cancellation and
+returns to dispatch while the worker finalizes and optionally normalizes WAV
+data. Select microphone or system-audio loopback; simultaneous-source mixing
+is not implemented. The meter is a native peak control, not the prior animated
+waveform. `-Verify` uses synthetic input without activating an audio device.
+
+`Catalog.ps1` returns the gallery inventory, `Window.theme.ps1` returns theme
+data, and `apps/Files.ps1` returns a trusted example descriptor. These are
+executable local PowerShell files; they are not sandboxed configuration.
+There is no graphical gallery browser yet. See [gallery/README.md](gallery/README.md).
+
+## Compose a capability
+
+```powershell
+$ui = & .\src\Win32.Windows.ps1
+try {
+    $window = $ui.CreateWindow('Example', 640, 480, 'Mica')
+    $ui.Root = $window
+    $ui.Show($window)
+    $ui.Run()
+} finally { $ui.Dispose() }
+```
+
+`Win32.Windows.ps1` creates windows, controls, themes and semantic dispatch;
+it has no desktop application policy. `Window.Windows.ps1` is the smaller
+HWND lifecycle binding. Drawing/text, D3D11/D3D12, DXGI, composition, WIC,
+WASAPI, Media Foundation discovery and pure geometry/camera math remain
+focused components. See the source and tests for ownership and prerequisites.
 
 ## Verify
 
-Run the source ratchet and the deterministic geometry tests:
-
 ```powershell
-pwsh -NoProfile -File .\tests\Verify.ps1
-pwsh -NoProfile -File .\tests\Geometry3D.Verify.ps1
-pwsh -NoProfile -File .\tests\Camera3D.Verify.ps1
-pwsh -NoProfile -File .\tests\ImageSilhouetteGate.Verify.ps1
+pwsh -NoProfile -File .\tests\Run-Tests.ps1
+pwsh -NoProfile -File .\tests\Run-Tests.ps1 -Native -Hardware
 ```
 
-Window, D3D12 presentation, audio capture, and screenshot tests exercise real machine resources and are kept as explicit tests rather than silently included in the deterministic suite.
+The first invocation runs deterministic checks and labels native checks NOT
+RUN. The second exercises real Windows services, creates task-owned windows
+and performs explicit audio hardware checks. Build managed and standalone
+outputs before native verification. Logs/results stay in ignored
+`verification-results/` or an explicit `-ResultDirectory` outside the repository.
+Human visual acceptance, presentation measurements and Android execution are
+separate gates. [docs/CLEANUP-REVIEW.md](docs/CLEANUP-REVIEW.md) records this cleanup.
 
 ## Layout
 
 ```text
-src/       PowerShell graphics and Windows binding source
-tests/     deterministic and hardware-facing verification scripts
-examples/  clickable and command-line demonstrations
-docs/      project work orders and design constraints
+src/           independent capability binders
+src/managed/   PowerShell-authored managed implementations
+gallery/       runnable samples, launchers, catalog, theme and descriptors
+tests/         deterministic, native and explicit hardware verification
+tools/         pinned acquisition, compilation, generation and packaging
+docs/          contracts and evidence
+build/         ignored DLLs, compiler cache and generated distributions
 ```
 
-Generated screenshots, recordings, and verification results are local artifacts and are not source.
-
-## Design boundary
-
-QuickPS provides mechanisms. It does not own an application loop, timing policy, scene manager, capability system, or resource registry. Higher-level scripts decide how to combine the pieces.
-
-## License
+Windows APIs need Windows implementations. Pure managed contracts can guide
+future Android implementations, but no Android equivalence or ReadyToRun
+performance benefit has been verified. Application choreography and studio
+workflows belong in consuming repositories.
 
 QuickPS is available under the MIT License.

@@ -2,7 +2,8 @@
 param(
     [Parameter(Mandatory)]
     [ValidateSet('Native', 'Window', 'Wic', 'Wasapi', 'MediaFoundation', 'Composition', 'DXGI', 'D3D12', 'Shader')]
-    [string] $Name
+    [string] $Name,
+    [switch] $Verify
 )
 
 $ErrorActionPreference = 'Stop'
@@ -23,23 +24,19 @@ function Show-ResultWindow([string] $Text, [uint32] $Color = 0x0033CC) {
         BackgroundColor = $Color
     }
     $null = $window.Show()
+    if($Verify){$null=$window.Close()}
     Write-Host ''
     Write-Host $Text -ForegroundColor Cyan
     Write-Host 'Close the blue window to finish.' -ForegroundColor Gray
-    while ($window.Alive) {
-        $null = $window.Pump()
-        [Threading.Thread]::Sleep(8)
-    }
+    $null = $window.Run()
 }
 
 function Wait-ResultWindow($Window, [string] $Text) {
+    if($Verify){$null=$Window.Close()}
     Write-Host ''
     Write-Host $Text -ForegroundColor Cyan
     Write-Host 'Close the window to finish.' -ForegroundColor Gray
-    while ($Window.Alive) {
-        $null = $Window.Pump()
-        [Threading.Thread]::Sleep(8)
-    }
+    $null = $Window.Run()
 }
 
 try {
@@ -180,7 +177,7 @@ catch {
     Write-Host ''
     Write-Host "QuickPS $Name FAILED" -ForegroundColor White -BackgroundColor Black
     Write-Host ($_ | Out-String) -ForegroundColor White -BackgroundColor Black
-    Read-Host 'Press Enter to exit'
+    if(-not $Verify){Read-Host 'Press Enter to exit'}
     exit 1
 }
 finally {

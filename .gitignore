@@ -1,5 +1,6 @@
 /artifacts/
 /verification-results/
+/build/
 *.zip
 *.tmp
 *.log
