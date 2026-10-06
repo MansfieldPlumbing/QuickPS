@@ -1,5 +1,19 @@
 # QuickPS implementation contract
 
+## Purpose and current priority
+
+- Purpose: a library of reusable, composable primitives (buttons, toggles,
+  text, images, 3D meshes and cameras) with Windows and Android backends,
+  authored in PowerShell and compiled to DLLs with PSLowering, so projects
+  never rebuild them.
+- Current priority: names and folder layout, then the docs. No new features
+  until that is done.
+- Toolchain: PowerShell 7.7.0-preview.5 on .NET 11.0.0-rc.1.26425.128.
+- A native or hardware test that did not run is reported as not run, never as
+  passing; the affected native tests run on this machine before each commit.
+- Push the day work is done, with the owner's approval; nothing lives only in
+  a local clone. Names describe the mechanism.
+
 Follow the applicable parent security baseline. Work only in this repository.
 Named external checkouts may be inspected read-only when explicitly authorized;
 never build, restore, modify, or consume uncommitted content from them. Acquire
