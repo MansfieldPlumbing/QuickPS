@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string] $OutputPath = (Join-Path $PSScriptRoot '..\artifacts\wasapi-capture.wav'),
-    [int] $Milliseconds = 2000,
+    [ValidateRange(1, 60000)][int] $Milliseconds = 2000,
     [switch] $Loopback
 )
 
@@ -14,8 +14,11 @@ $output = [IO.Path]::GetFullPath($OutputPath)
 [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($output)) | Out-Null
 $wasapi = & (Join-Path $PSScriptRoot '..\src\Wasapi.Windows.ps1')
 $bytes = [Collections.Generic.List[byte]]::new()
+$native = $null
 
 try {
+    $native = & (Join-Path $PSScriptRoot '..\src\Native.ps1')
+    $wait = $native.GetExportCall('kernel32.dll', 'WaitForSingleObject', [uint32], @([IntPtr], [uint32]))
     $flow = if ($Loopback) { 'Render' } else { 'Capture' }
     $device = $wasapi.GetDefaultEndpoint($flow, 'Multimedia')
     $client = $wasapi.ActivateAudioClient($device)
@@ -26,27 +29,39 @@ try {
     $averageBytesPerSecond = [uint32][Runtime.InteropServices.Marshal]::ReadInt32($format, 8)
     $blockAlign = [uint16][Runtime.InteropServices.Marshal]::ReadInt16($format, 12)
     $bitsPerSample = [uint16][Runtime.InteropServices.Marshal]::ReadInt16($format, 14)
-    $null = $wasapi.InitializeShared($client, $format, $Loopback, $false, 10000000)
+    $audioReady = $wasapi.InitializeShared($client, $format, $Loopback, $true, 0)
     $capture = $wasapi.GetService($client, 'Capture')
     $null = $wasapi.Start($client)
     $clock = [Diagnostics.Stopwatch]::StartNew()
+    # SetEventHandle signals buffer availability. The sole timeout is the test's
+    # final deadline, not a recurring retry interval. Drain only after a signal.
+    # https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudioclient-seteventhandle
     while ($clock.ElapsedMilliseconds -lt $Milliseconds) {
-        $packetFrames = $wasapi.GetNextCapturePacketSize($capture)
-        if ($packetFrames -eq 0) {
-            [Threading.Thread]::Sleep(2)
-            continue
-        }
-        $packet = $wasapi.AcquireCaptureBuffer($capture)
-        try {
-            $byteCount = [int]($packet.Frames * $blockAlign)
-            $chunk = [byte[]]::new($byteCount)
-            # AUDCLNT_BUFFERFLAGS_SILENT means the pointer must not be read.
-            if (($packet.Flags -band [uint32]2) -eq 0 -and $packet.Data -ne [IntPtr]::Zero) {
-                [Runtime.InteropServices.Marshal]::Copy($packet.Data, $chunk, 0, $byteCount)
+        $remainingMilliseconds = [long]$Milliseconds - $clock.ElapsedMilliseconds
+        if ($remainingMilliseconds -le 0) { break }
+        $remaining = [uint32]$remainingMilliseconds
+        $waitResult = [uint32]$wait.Invoke($audioReady, $remaining)
+        if ($waitResult -eq 258) { break } # WAIT_TIMEOUT: final deadline
+        if ($waitResult -ne 0) { throw 'Audio buffer wait failed.' }
+        while (($packetFrames = $wasapi.GetNextCapturePacketSize($capture)) -ne 0) {
+            $packet = $wasapi.AcquireCaptureBuffer($capture)
+            try {
+                $byteCount64 = [long]$packet.Frames * [long]$blockAlign
+                if ($byteCount64 -lt 0 -or $byteCount64 -gt 16777216 -or [long]$bytes.Count + $byteCount64 -gt 268435456) {
+                    throw 'Capture data exceeds the test buffer bound.'
+                }
+                $byteCount = [int]$byteCount64
+                $chunk = [byte[]]::new($byteCount)
+                # AUDCLNT_BUFFERFLAGS_SILENT means the pointer must not be read.
+                if (($packet.Flags -band [uint32]2) -eq 0 -and $byteCount -gt 0) {
+                    if ($packet.Data -eq [IntPtr]::Zero) { throw 'Non-silent capture packet has no data.' }
+                    [Runtime.InteropServices.Marshal]::Copy($packet.Data, $chunk, 0, $byteCount)
+                }
+                $bytes.AddRange($chunk)
             }
-            $bytes.AddRange($chunk)
+            finally { $null = $wasapi.ReleaseCaptureBuffer($capture, $packet.Frames) }
+            if ($clock.ElapsedMilliseconds -ge $Milliseconds) { break }
         }
-        finally { $null = $wasapi.ReleaseCaptureBuffer($capture, $packet.Frames) }
     }
     $null = $wasapi.Stop($client)
 
@@ -86,5 +101,6 @@ try {
     }
 }
 finally {
-    if ($wasapi) { $wasapi.Dispose() }
+    try { if ($wasapi) { $wasapi.Dispose() } }
+    finally { if ($native) { $native.Dispose() } }
 }
