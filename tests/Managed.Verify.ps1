@@ -1,6 +1,43 @@
 [CmdletBinding()]
-param([string]$AssemblyPath=(Join-Path $PSScriptRoot '..\build\managed\QuickPS.AudioCapture.dll'))
+param([string]$AssemblyPath=(Join-Path $PSScriptRoot '..\build\managed\QuickPS.AudioCapture.dll'),[switch]$Composition)
 $ErrorActionPreference='Stop'
+if($Composition){
+    $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+    $directory=Join-Path $root ('build/composition-verification/'+[Guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($directory)
+    $helper=Join-Path $directory 'Selected.ps1'
+    $application=Join-Path $directory 'Proof.ps1'
+    [IO.File]::WriteAllText($helper,'class Selected { static [int] Answer() { return 42 } }')
+    [IO.File]::WriteAllText($application,'class Proof { static [int] Main() { return [Selected]::Answer() } }')
+    $builder=Join-Path $root 'tools/Build-Appliance.ps1'
+    $first=Join-Path $directory 'first/Proof.dll'
+    $second=Join-Path $directory 'second/Proof.dll'
+    foreach($output in @($first,$second)){
+        & $builder -Application $application -Source $helper -OutputKind Assembly -OutputPath $output -ClassName Proof -EntryPoint Main | Out-Null
+    }
+    if((Get-FileHash -LiteralPath $first).Hash -ne (Get-FileHash -LiteralPath $second).Hash){throw 'Composed IL is not deterministic.'}
+    $context=[Runtime.Loader.AssemblyLoadContext]::new('composition-verification',$true)
+    try{
+        $assembly=$context.LoadFromAssemblyPath($first)
+        if($assembly.GetType('Proof',$true).GetMethod('Main').Invoke($null,@()) -ne 42){throw 'Peer-source entry failed.'}
+        $references=@($assembly.GetReferencedAssemblies())
+        if($references.Count -ne 1 -or $references[0].Name -ne 'System.Private.CoreLib'){throw 'Unexpected composed dependency.'}
+    }finally{$context.Unload()}
+    $bundle=Join-Path $directory 'standalone/Proof.ps1'
+    & $builder -Application $application -Source $helper -OutputKind SourceBundle -OutputPath $bundle -ClassName Proof -EntryPoint Main | Out-Null
+    & (Join-Path $PSHOME 'pwsh.exe') -NoProfile -File $bundle
+    if($LASTEXITCODE -ne 42){throw 'Standalone launch-time lowering failed.'}
+    $bad=Join-Path $directory 'Unsupported.ps1'
+    [IO.File]::WriteAllText($bad,"class Unsupported { static [int] Main() { return 0 } }`nWrite-Output 'must not disappear'")
+    $rejected=$false
+    try{& $builder -Application $bad -OutputPath (Join-Path $directory 'unsupported.dll') | Out-Null}catch{if($_.Exception.Message -match 'nothing was omitted'){$rejected=$true}else{throw}}
+    if(-not $rejected){throw 'Top-level runtime behavior was silently omitted.'}
+    $rejected=$false
+    try{& $builder -Application $application -Source @($helper,$helper) -OutputPath (Join-Path $directory 'duplicate.dll') | Out-Null}catch{if($_.Exception.Message -match 'same file twice'){$rejected=$true}else{throw}}
+    if(-not $rejected){throw 'Duplicate source selection was admitted.'}
+    'PASS: explicit source composition, deterministic CoreLib-only IL, standalone launch-time lowering, and unsupported/duplicate rejection.'
+    return
+}
 $assembly=[Runtime.Loader.AssemblyLoadContext]::Default.LoadFromAssemblyPath([IO.Path]::GetFullPath($AssemblyPath))
 foreach($reference in $assembly.GetReferencedAssemblies()){
     if($reference.Name -match 'Management.Automation|Microsoft.CSharp'){throw 'Managed output depends on the PowerShell engine or C# dynamic binder.'}

@@ -40,6 +40,8 @@ if($Native){
     try{$graphics.Clear([Drawing.Color]::FromArgb(4,6,15));$graphics.FillRectangle($brush,30,40,140,70);$bitmap.Save($synthetic,[Drawing.Imaging.ImageFormat]::Png)}finally{$brush.Dispose();$graphics.Dispose();$bitmap.Dispose()}
 }
 $pure=@('Verify.ps1','Geometry3D.Verify.ps1','Camera3D.Verify.ps1','Gallery.Verify.ps1')
+$compositionSkip=if(Test-Path -LiteralPath (Join-Path $root 'build/upstream/pslowering/source.tar')){''}else{'Requires the pinned compiler archive; run tools/Acquire-PSLowering.ps1 -Acquire explicitly.'}
+Invoke-Check 'Managed-composition' (Join-Path $PSScriptRoot 'Managed.Verify.ps1') @('-Composition') $compositionSkip
 foreach($file in Get-ChildItem $PSScriptRoot -File -Filter '*.ps1' | Where-Object Name -NE 'Run-Tests.ps1' | Sort-Object Name){
     $arguments=@();$skip=''
     if($file.Name -notin $pure -and -not $Native){$skip='Requires Windows native services; pass -Native.'}

@@ -1,36 +1,53 @@
-# Native media capability plan
+# Media capabilities: current status and next proof
 
-QuickPS supplies Windows-native mechanisms. Camera management products, surveillance policy, model inference, and remote appliances belong to consumers. This is an implementation plan, not a claim that these capabilities exist yet.
+QuickPS provides reusable PowerShell-authored media mechanisms. Applications own
+recording policy, source selection and presentation. Capability source can lower
+with an appliance or produce a reusable assembly; no permanent media framework
+DLL is an architectural requirement. QuickPS consumes PSLowering rather than
+implementing compiler extensions here.
 
-## Public vocabulary
+## Current sources
 
-- Source: supplies timestamped media samples or GPU surfaces with an explicit format and lifetime.
-- Route: connects a source to an output with a declared selection and overload policy.
-- Mixer: composes selected inputs into one output surface (switch, grid, picture-in-picture).
-- Output: preview, encoder/stream, recording, or virtual-camera endpoint.
+| Source | Mechanism and limit |
+| --- | --- |
+| `src/Wasapi.Windows.ps1` | Windows audio endpoint/COM bindings |
+| `src/Capture.Windows.ps1`, `src/managed/AudioCapture.ps1` | Capture facade and typed worker; current compiled COM dispatch uses delegates/DynamicInvoke |
+| `src/MediaSession.Windows.ps1`, `src/MediaSessionEvents.Windows.ps1`, `src/managed/MediaSessionEvents.ps1` | Windows media session bindings and typed event worker |
+| `src/MediaFoundation.Windows.ps1`, `src/CaptureDevice.Windows.ps1` | Overlapping device discovery pending consolidation |
+| `src/WindowCapture.Windows.ps1` | Window enumeration and explicit window-to-image capture |
+| `gallery/SoundRecorder.ps1` | Historical portrait application reference; window proof does not verify recording |
 
-Keep discovery/control separate from sample delivery. PowerShell configures topology and reacts to semantic events; native media components perform delivery, synchronization and presentation. Do not introduce a PowerShell sample-processing loop or timer-based scheduler as the default transport.
+Native APIs, formats, ownership and failure semantics remain defined by source
+ABI contracts and affected tests. Compiled workers do not establish that the
+whole recorder is lowered. Hardware tests need explicit execution evidence.
 
-## Required contracts before implementation
+## Next proof: SoundRecorder
 
-Each capability must declare format negotiation, timestamps/timebase, ownership, thread affinity, start/stop/cancel behavior, bounded buffering, overload policy, disconnect/reconnect behavior, and errors. GPU sharing additionally needs adapter identity, access rights, synchronization, and explicit resource lifetime. Cross-process discovery must validate metadata and authorization; a discovered name is not trust.
+Preserve Mic, Apps and Both capture, waveform, elapsed time, pause/resume, stop
+and WAV output. After the tiny static-runtime proof, lower recorder runtime
+behavior and selected capabilities together. Use compiled callbacks and native
+event waits; do not deliver audio through PowerShell polling or interpreted
+callbacks on arbitrary native threads. Keep buffers bounded, preserve COM/thread
+affinity, release each acquired packet and verify cancellation/partial failures.
 
-Do not call all network cameras interchangeable. Device adapters must identify transport, codec, credentials handling, and supported negotiation. Never log credentials or embed them in example URLs. Broadcasting needs an explicit transport/codec; a virtual camera is a distinct output, not a network broadcast protocol.
+Its target is CoreLib-only managed code executing through CoreCLR and RyuJIT
+supplied in the same EXE, with no SMA, adjacent runtime DLLs or extraction.
+The Pwsh Android store/probe is a concrete memory-loading reference; Android APK
+size is not Windows PE sizing evidence. Compiler gaps and gates are in
+[PSLowering requirements](PSLOWERING-REQUIREMENTS.md); packaging is in
+[the work order](WORKORDER.md).
 
-## Ordered proofs
+## Planned media extensions
 
-1. Synthetic native source to independent preview: establish resource sharing, synchronization, bounded delivery and clean shutdown without camera permissions or model dependencies.
-2. Two sources to switch/grid/PIP mixer: verify layout, input removal, stopped/stalled sources, resource cleanup and output continuity. Visible proof plus bounded automated checks.
-3. Output adapters: treat network streaming, recording and virtual-camera activation as separately testable capabilities. Select documented APIs and inspect pinned source before binding. Virtual-camera registration/hosting requires a specific reviewed installation and rollback plan; do not register arbitrary DLLs.
-4. Camera adapters: physical camera first, then an explicitly selected network transport/codec. Test denied access, negotiation failure, disconnect and cancellation.
-5. Scale tests: grow synthetic route counts independently from decode and encode workloads, then measure representative real inputs.
+Sources supply timestamped samples/surfaces; routes connect selected inputs;
+mixers compose them; outputs preview, record, encode or expose an endpoint.
+These are vocabulary for possible future capabilities, not built routing support.
+Before implementation specify format negotiation, timebase, ownership, start/stop,
+cancellation, bounded buffering, overload, disconnection and errors. GPU sharing
+also needs adapter identity, rights, synchronization and retirement.
 
-## 200-camera target
-
-Separate four quantities: configured sources, concurrently receiving sources, concurrently decoded sources, and displayed/mixed sources. Record resolution, codec, rate, bitrate, transport, decoder limits, adapter, output dimensions, queue limits, bandwidth, latency, memory and test duration. Include a stalled source and slow output.
-
-Support selective subscriptions and lower-resolution inputs where available. Define whether overload drops stale samples, rejects work, or blocks upstream; no unbounded queue may hide overload. Acceptance requires bounded memory, predictable degradation and responsive control, not just connection count. No 200-stream decode capacity or performance claim has been established.
-
-## Existing application replacement
-
-VirtuaCam is a reference implementation, not a runtime dependency or an authorized deletion target. Inventory its source discovery, GPU sharing, composition, endpoint activation and cleanup behavior. Replace each with an independently verified QuickPS primitive and a parity proof. Keep the existing application intact until the composed replacement satisfies its required scenarios. Model/tracking application code remains in lens-refactor.
+Begin with a synthetic source/preview proof, then independently verify mixing
+and required output/device adapters. Network transport, virtual-camera activation
+and scale are separate contracts. System registration needs an approved recoverable
+operation. No 200-camera capacity, cross-process transport or replacement product
+is established. Consumer repositories remain intact and isolated.
