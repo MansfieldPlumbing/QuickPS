@@ -64,14 +64,14 @@
         @{
             Id = 'sound-recorder'
             Title = 'Native sound recorder'
-            Description = 'Event-driven managed WASAPI capture, native peak meter, pause, asynchronous Stop and normalization.'
+            Description = 'Portrait recorder with custom waveform, elapsed time and Mic/Apps/Both source choices.'
             Script = 'SoundRecorder.ps1'
             Launcher = 'SoundRecorder.cmd'
-            Source = '../src/managed/AudioCapture.ps1'
+            Source = 'SoundRecorder.ps1'
             Verification = 'SoundRecorder.ps1'
             VerificationArguments = @('-Verify')
             Platform = 'Windows x64; PowerShell 7; WASAPI and DWM Mica Alt'
-            Status = 'Synthetic command and worker tests available; live device checks separate'
+            Status = 'Historical presentation restored; window proof available; live audio and runtime modernization pending'
         }
         @{
             Id = 'window-capture'
