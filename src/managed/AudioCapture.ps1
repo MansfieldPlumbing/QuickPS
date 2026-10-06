@@ -6,7 +6,7 @@ if ($MyInvocation.InvocationName -eq '.') { throw 'Invoke this source with &, no
 # WAVEFORMATEX is 18 bytes, cbSize at 16; COM slots include IUnknown.
 # Compile this file with tools/Build-Managed.ps1; native import stubs cannot
 # execute as interpreted PowerShell. No C# or runtime source compilation.
-class QuickPSWindows {
+class QuickPSAudioInterop {
     [System.Runtime.InteropServices.LibraryImport('ole32.dll', EntryPoint='CoInitializeEx')]
     static [int] CoInitialize([IntPtr]$reserved,[uint]$flags) { throw [NotSupportedException]::new('Build managed source first.') }
     [System.Runtime.InteropServices.LibraryImport('ole32.dll', EntryPoint='CoUninitialize')]
@@ -75,10 +75,10 @@ class QuickPSCapture {
 
     QuickPSCapture() {
         $this.Sync=[object]::new()
-        $this.StopEvent=[QuickPSWindows]::CreateEvent([IntPtr]::Zero,1,0,[IntPtr]::Zero)
-        $this.PauseEvent=[QuickPSWindows]::CreateEvent([IntPtr]::Zero,1,0,[IntPtr]::Zero)
-        $this.DoneEvent=[QuickPSWindows]::CreateEvent([IntPtr]::Zero,1,0,[IntPtr]::Zero)
-        $this.StartedEvent=[QuickPSWindows]::CreateEvent([IntPtr]::Zero,1,0,[IntPtr]::Zero)
+        $this.StopEvent=[QuickPSAudioInterop]::CreateEvent([IntPtr]::Zero,1,0,[IntPtr]::Zero)
+        $this.PauseEvent=[QuickPSAudioInterop]::CreateEvent([IntPtr]::Zero,1,0,[IntPtr]::Zero)
+        $this.DoneEvent=[QuickPSAudioInterop]::CreateEvent([IntPtr]::Zero,1,0,[IntPtr]::Zero)
+        $this.StartedEvent=[QuickPSAudioInterop]::CreateEvent([IntPtr]::Zero,1,0,[IntPtr]::Zero)
         if($this.StopEvent -eq [IntPtr]::Zero -or $this.PauseEvent -eq [IntPtr]::Zero -or $this.DoneEvent -eq [IntPtr]::Zero -or $this.StartedEvent -eq [IntPtr]::Zero) {
             $this.Dispose()
             throw [InvalidOperationException]::new('Cannot create capture events.')
@@ -95,10 +95,10 @@ class QuickPSCapture {
         return $value
     }
     [void] RequestStop() {
-        if([QuickPSWindows]::SetEvent($this.StopEvent) -eq 0) { throw [InvalidOperationException]::new('Cannot signal Stop.') }
+        if([QuickPSAudioInterop]::SetEvent($this.StopEvent) -eq 0) { throw [InvalidOperationException]::new('Cannot signal Stop.') }
     }
     [void] Pause() {
-        if([QuickPSWindows]::SetEvent($this.PauseEvent) -eq 0) { throw [InvalidOperationException]::new('Cannot signal Pause.') }
+        if([QuickPSAudioInterop]::SetEvent($this.PauseEvent) -eq 0) { throw [InvalidOperationException]::new('Cannot signal Pause.') }
     }
     # Resume uses ResetEvent supplied by an explicit native import below.
     [System.Runtime.InteropServices.LibraryImport('kernel32.dll', EntryPoint='ResetEvent')]
@@ -111,7 +111,9 @@ class QuickPSCapture {
         [IntPtr]$table=[Runtime.InteropServices.Marshal]::ReadIntPtr($instance)
         [IntPtr]$address=[Runtime.InteropServices.Marshal]::ReadIntPtr($table,$slot * 8)
         [Delegate]$method=[Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer($address,$this.Signatures[$signature])
-        [int]$hr=[int]$method.DynamicInvoke($arguments)
+        # [Convert]::ToInt32 unboxes the returned Int32. A cast of the object
+        # result compiles to conv.i4 of the reference at the pinned compiler.
+        [int]$hr=[Convert]::ToInt32($method.DynamicInvoke($arguments))
         if($hr -lt 0){$this.Failure='WASAPI failed with HRESULT '+[Convert]::ToString($hr,16)}
         return $hr
     }
@@ -148,26 +150,26 @@ class QuickPSCapture {
                 [Buffer]::BlockCopy([BitConverter]::GetBytes([short]16),0,$formatBytes,14,2)
             } else {
                 $this.Trace('CoInitialize')
-                [QuickPSWindows]::Check([QuickPSWindows]::CoInitialize([IntPtr]::Zero,[uint]0))
+                [QuickPSAudioInterop]::Check([QuickPSAudioInterop]::CoInitialize([IntPtr]::Zero,[uint]0))
                 $coInitialized=$true
-                [IntPtr]$clsid=[QuickPSWindows]::GuidMemory('9503DEBC2FE57C468E3DC4579291692E')
-                [IntPtr]$iid=[QuickPSWindows]::GuidMemory('D26456A91496354FA746DE8DB63617E6')
+                [IntPtr]$clsid=[QuickPSAudioInterop]::GuidMemory('9503DEBC2FE57C468E3DC4579291692E')
+                [IntPtr]$iid=[QuickPSAudioInterop]::GuidMemory('D26456A91496354FA746DE8DB63617E6')
                 try {
                     [Runtime.InteropServices.Marshal]::WriteIntPtr($scratch,[IntPtr]::Zero)
                     $this.Trace('CoCreate')
-                    [QuickPSWindows]::Check([QuickPSWindows]::CoCreate($clsid,[IntPtr]::Zero,[uint]1,$iid,$scratch))
+                    [QuickPSAudioInterop]::Check([QuickPSAudioInterop]::CoCreate($clsid,[IntPtr]::Zero,[uint]1,$iid,$scratch))
                     $enumerator=[Runtime.InteropServices.Marshal]::ReadIntPtr($scratch)
                 } finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($clsid); [Runtime.InteropServices.Marshal]::FreeHGlobal($iid) }
                 [uint]$flow=1
                 if($this.Loopback) { $flow=0 }
-                [QuickPSWindows]::Check($this.Call($enumerator,4,0,[object[]]@($enumerator,$flow,[uint]1,$scratch)))
+                [QuickPSAudioInterop]::Check($this.Call($enumerator,4,0,[object[]]@($enumerator,$flow,[uint]1,$scratch)))
                 $device=[Runtime.InteropServices.Marshal]::ReadIntPtr($scratch)
-                $iid=[QuickPSWindows]::GuidMemory('4CADB91CFADB324CB178C2F568A703B2')
+                $iid=[QuickPSAudioInterop]::GuidMemory('4CADB91CFADB324CB178C2F568A703B2')
                 try {
-                    [QuickPSWindows]::Check($this.Call($device,3,1,[object[]]@($device,$iid,[uint]1,[IntPtr]::Zero,$scratch)))
+                    [QuickPSAudioInterop]::Check($this.Call($device,3,1,[object[]]@($device,$iid,[uint]1,[IntPtr]::Zero,$scratch)))
                     $client=[Runtime.InteropServices.Marshal]::ReadIntPtr($scratch)
                 } finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($iid) }
-                [QuickPSWindows]::Check($this.Call($client,8,2,[object[]]@($client,$scratch)))
+                [QuickPSAudioInterop]::Check($this.Call($client,8,2,[object[]]@($client,$scratch)))
                 $format=[Runtime.InteropServices.Marshal]::ReadIntPtr($scratch)
                 $this.Trace('Read mix format')
                 [int]$formatLength=18 + [int][Runtime.InteropServices.Marshal]::ReadInt16($format,16)
@@ -182,13 +184,13 @@ class QuickPSCapture {
                 if($this.BlockAlign -le 0 -or $this.SampleRate -le 0) { throw [IO.InvalidDataException]::new('Invalid audio format.') }
                 [uint]$flags=262144
                 if($this.Loopback) { $flags=$flags -bor [uint]131072 }
-                [QuickPSWindows]::Check($this.Call($client,3,3,[object[]]@($client,[uint]0,$flags,[long]0,[long]0,$format,[IntPtr]::Zero)))
-                $audioEvent=[QuickPSWindows]::CreateEvent([IntPtr]::Zero,0,0,[IntPtr]::Zero)
+                [QuickPSAudioInterop]::Check($this.Call($client,3,3,[object[]]@($client,[uint]0,$flags,[long]0,[long]0,$format,[IntPtr]::Zero)))
+                $audioEvent=[QuickPSAudioInterop]::CreateEvent([IntPtr]::Zero,0,0,[IntPtr]::Zero)
                 if($audioEvent -eq [IntPtr]::Zero) { throw [InvalidOperationException]::new('Cannot create audio event.') }
-                [QuickPSWindows]::Check($this.Call($client,13,2,[object[]]@($client,$audioEvent)))
-                $iid=[QuickPSWindows]::GuidMemory('64BDADC81EE7A048A4DE185C395CD317')
+                [QuickPSAudioInterop]::Check($this.Call($client,13,2,[object[]]@($client,$audioEvent)))
+                $iid=[QuickPSAudioInterop]::GuidMemory('64BDADC81EE7A048A4DE185C395CD317')
                 try {
-                    [QuickPSWindows]::Check($this.Call($client,14,4,[object[]]@($client,$iid,$scratch)))
+                    [QuickPSAudioInterop]::Check($this.Call($client,14,4,[object[]]@($client,$iid,$scratch)))
                     $capture=[Runtime.InteropServices.Marshal]::ReadIntPtr($scratch)
                 } finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($iid) }
             }
@@ -210,29 +212,29 @@ class QuickPSCapture {
                 $this.BytesWritten=[long]$this.SyntheticBytes.Length
             }
             if(-not $this.Synthetic) {
-                [QuickPSWindows]::Check($this.Call($client,10,5,[object[]]@($client)))
+                [QuickPSAudioInterop]::Check($this.Call($client,10,5,[object[]]@($client)))
                 $started=$true
             }
             $this.SetStatus(2)
-            [QuickPSWindows]::SetEvent($this.StartedEvent)
+            [QuickPSAudioInterop]::SetEvent($this.StartedEvent)
             [Runtime.InteropServices.Marshal]::WriteIntPtr($scratch,80,$this.StopEvent)
             [Runtime.InteropServices.Marshal]::WriteIntPtr($scratch,88,$audioEvent)
             [bool]$running=$true
             while($running) {
                 [uint]$wait=0
-                if($this.Synthetic) { $wait=[QuickPSWindows]::WaitOne($this.StopEvent,[uint]4294967295) }
-                else { $wait=[QuickPSWindows]::WaitMany([uint]2,[IntPtr]::Add($scratch,80),0,[uint]4294967295) }
+                if($this.Synthetic) { $wait=[QuickPSAudioInterop]::WaitOne($this.StopEvent,[uint]4294967295) }
+                else { $wait=[QuickPSAudioInterop]::WaitMany([uint]2,[IntPtr]::Add($scratch,80),0,[uint]4294967295) }
                 if($wait -eq [uint]0) { $running=$false }
                 elseif($wait -ne [uint]1) { throw [InvalidOperationException]::new('Capture wait failed.') }
                 if(-not $this.Synthetic) {
                     [int]$packets=0
                     [bool]$draining=$true
                     while($draining -and $packets -lt 256) {
-                        [QuickPSWindows]::Check($this.Call($capture,5,2,[object[]]@($capture,$scratch)))
+                        [QuickPSAudioInterop]::Check($this.Call($capture,5,2,[object[]]@($capture,$scratch)))
                         [int]$available=[Runtime.InteropServices.Marshal]::ReadInt32($scratch)
                         if($available -eq 0) { $draining=$false }
                         else {
-                            [QuickPSWindows]::Check($this.Call($capture,3,6,[object[]]@($capture,$scratch,[IntPtr]::Add($scratch,8),[IntPtr]::Add($scratch,12),[IntPtr]::Zero,[IntPtr]::Zero)))
+                            [QuickPSAudioInterop]::Check($this.Call($capture,3,6,[object[]]@($capture,$scratch,[IntPtr]::Add($scratch,8),[IntPtr]::Add($scratch,12),[IntPtr]::Zero,[IntPtr]::Zero)))
                             [int]$count=[Runtime.InteropServices.Marshal]::ReadInt32($scratch,8)
                             try {
                                 if($count -lt 0 -or $count -gt 1048576) { throw [IO.InvalidDataException]::new('Invalid packet size.') }
@@ -245,7 +247,7 @@ class QuickPSCapture {
                                     if($data -eq [IntPtr]::Zero) { throw [IO.InvalidDataException]::new('Null audio data.') }
                                     [Runtime.InteropServices.Marshal]::Copy($data,$bytes,0,$length)
                                 }
-                                if([QuickPSWindows]::WaitOne($this.PauseEvent,[uint]0) -eq [uint]258) {
+                                if([QuickPSAudioInterop]::WaitOne($this.PauseEvent,[uint]0) -eq [uint]258) {
                                     if($file.Length + [long]$length -gt [long]4294967295) { throw [IO.InvalidDataException]::new('RIFF capacity reached.') }
                                     $writer.Write($bytes)
                                     $this.BytesWritten += [long]$length
@@ -254,10 +256,10 @@ class QuickPSCapture {
                                         [int]$position=[int][Math]::Min(100.0,$peak * 100.0)
                                         # PBM_SETPOS has a numeric payload; asynchronous delivery
                                         # avoids a cross-thread SendMessage/Join deadlock.
-                                        [QuickPSWindows]::PostMessage($this.MeterWindow,[uint]1026,[IntPtr]::new($position),[IntPtr]::Zero)
+                                        [QuickPSAudioInterop]::PostMessage($this.MeterWindow,[uint]1026,[IntPtr]::new($position),[IntPtr]::Zero)
                                     }
                                 }
-                            } finally { [QuickPSWindows]::Check($this.Call($capture,4,7,[object[]]@($capture,[uint]$count))) }
+                            } finally { [QuickPSAudioInterop]::Check($this.Call($capture,4,7,[object[]]@($capture,[uint]$count))) }
                             $packets++
                         }
                     }
@@ -265,7 +267,7 @@ class QuickPSCapture {
                 }
             }
             if($started) {
-                [QuickPSWindows]::Check($this.Call($client,11,5,[object[]]@($client)))
+                [QuickPSAudioInterop]::Check($this.Call($client,11,5,[object[]]@($client)))
                 $started=$false
             }
             $writer.Flush()
@@ -287,21 +289,21 @@ class QuickPSCapture {
             if($started) { $this.Call($client,11,5,[object[]]@($client)) }
             $this.Trace('Release interfaces')
             $this.Release($capture); $this.Release($client); $this.Release($device); $this.Release($enumerator)
-            if($format -ne [IntPtr]::Zero) { [QuickPSWindows]::CoTaskFree($format) }
-            if($audioEvent -ne [IntPtr]::Zero) { [QuickPSWindows]::CloseHandle($audioEvent) }
+            if($format -ne [IntPtr]::Zero) { [QuickPSAudioInterop]::CoTaskFree($format) }
+            if($audioEvent -ne [IntPtr]::Zero) { [QuickPSAudioInterop]::CloseHandle($audioEvent) }
             [Runtime.InteropServices.Marshal]::FreeHGlobal($scratch)
-            if($coInitialized) { [QuickPSWindows]::CoUninitialize() }
-            [QuickPSWindows]::SetEvent($this.DoneEvent)
-            [QuickPSWindows]::SetEvent($this.StartedEvent)
-            if($this.NotifyWindow -ne [IntPtr]::Zero) { [QuickPSWindows]::PostMessage($this.NotifyWindow,[uint]273,[IntPtr]::new($this.NotifyId),$this.NotifyControl) }
+            if($coInitialized) { [QuickPSAudioInterop]::CoUninitialize() }
+            [QuickPSAudioInterop]::SetEvent($this.DoneEvent)
+            [QuickPSAudioInterop]::SetEvent($this.StartedEvent)
+            if($this.NotifyWindow -ne [IntPtr]::Zero) { [QuickPSAudioInterop]::PostMessage($this.NotifyWindow,[uint]273,[IntPtr]::new($this.NotifyId),$this.NotifyControl) }
         }
     }
     [void] Dispose() {
         if($this.Thread -ne [Threading.Thread]$null -and $this.Thread.IsAlive) { throw [InvalidOperationException]::new('Wait for worker completion before disposal.') }
-        if($this.StopEvent -ne [IntPtr]::Zero) { [QuickPSWindows]::CloseHandle($this.StopEvent); $this.StopEvent=[IntPtr]::Zero }
-        if($this.PauseEvent -ne [IntPtr]::Zero) { [QuickPSWindows]::CloseHandle($this.PauseEvent); $this.PauseEvent=[IntPtr]::Zero }
-        if($this.DoneEvent -ne [IntPtr]::Zero) { [QuickPSWindows]::CloseHandle($this.DoneEvent); $this.DoneEvent=[IntPtr]::Zero }
-        if($this.StartedEvent -ne [IntPtr]::Zero) { [QuickPSWindows]::CloseHandle($this.StartedEvent); $this.StartedEvent=[IntPtr]::Zero }
+        if($this.StopEvent -ne [IntPtr]::Zero) { [QuickPSAudioInterop]::CloseHandle($this.StopEvent); $this.StopEvent=[IntPtr]::Zero }
+        if($this.PauseEvent -ne [IntPtr]::Zero) { [QuickPSAudioInterop]::CloseHandle($this.PauseEvent); $this.PauseEvent=[IntPtr]::Zero }
+        if($this.DoneEvent -ne [IntPtr]::Zero) { [QuickPSAudioInterop]::CloseHandle($this.DoneEvent); $this.DoneEvent=[IntPtr]::Zero }
+        if($this.StartedEvent -ne [IntPtr]::Zero) { [QuickPSAudioInterop]::CloseHandle($this.StartedEvent); $this.StartedEvent=[IntPtr]::Zero }
     }
 }
 

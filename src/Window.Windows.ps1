@@ -103,6 +103,15 @@ $Window = & {
     $postMessage = & $bind $user32 'PostMessageW' ([bool]) @(
         [IntPtr], [uint32], [IntPtr], [IntPtr])
     $isWindow = & $bind $user32 'IsWindow' ([bool]) @([IntPtr])
+    # RECT is four Int32 values; MONITORINFO is 40 bytes with rcMonitor at 4.
+    $getClientRect = & $bind $user32 'GetClientRect' ([bool]) @([IntPtr], [IntPtr])
+    $getWindowRect = & $bind $user32 'GetWindowRect' ([bool]) @([IntPtr], [IntPtr])
+    $getWindowLong = & $bind $user32 'GetWindowLongPtrW' ([IntPtr]) @([IntPtr], [int32])
+    $setWindowLong = & $bind $user32 'SetWindowLongPtrW' ([IntPtr]) @([IntPtr], [int32], [IntPtr])
+    $setWindowPos = & $bind $user32 'SetWindowPos' ([bool]) @(
+        [IntPtr], [IntPtr], [int32], [int32], [int32], [int32], [uint32])
+    $monitorFromWindow = & $bind $user32 'MonitorFromWindow' ([IntPtr]) @([IntPtr], [uint32])
+    $getMonitorInfo = & $bind $user32 'GetMonitorInfoW' ([bool]) @([IntPtr], [IntPtr])
     $isChild = & $bind $user32 'IsChild' ([bool]) @([IntPtr],[IntPtr])
     $setLayeredWindowAttributes = & $bind $user32 'SetLayeredWindowAttributes' ([bool]) @(
         [IntPtr], [uint32], [byte], [uint32])
@@ -227,7 +236,66 @@ $Window = & {
             DestroyWindowCall = $destroyWindow
             UnregisterClassCall = $unregisterClass
             DeleteObjectCall = $deleteObject
+            GetClientRectCall = $getClientRect
+            GetWindowRectCall = $getWindowRect
+            GetWindowLongCall = $getWindowLong
+            SetWindowLongCall = $setWindowLong
+            SetWindowPosCall = $setWindowPos
+            MonitorFromWindowCall = $monitorFromWindow
+            GetMonitorInfoCall = $getMonitorInfo
+            Fullscreen = $false
+            SavedStyle = [IntPtr]::Zero
+            SavedBounds = @(0, 0, 0, 0)
         }
+
+        $instance | Add-Member ScriptMethod GetClientSize ({
+            $rect = [Runtime.InteropServices.Marshal]::AllocHGlobal(16)
+            try {
+                if (-not $this.GetClientRectCall.DynamicInvoke($this.Hwnd, $rect)) { return @(0, 0) }
+                @([Runtime.InteropServices.Marshal]::ReadInt32($rect, 8), [Runtime.InteropServices.Marshal]::ReadInt32($rect, 12))
+            } finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($rect) }
+        }.GetNewClosure())
+
+        $instance | Add-Member ScriptMethod SetFullscreen ({
+            param([bool]$Enabled)
+            if ($Enabled -eq $this.Fullscreen) { return }
+            # GWL_STYLE -16. Fullscreen is WS_POPUP | WS_VISIBLE over the nearest
+            # monitor's full rectangle (MONITOR_DEFAULTTONEAREST 2); leaving it
+            # restores the saved style and window rectangle. SWP_FRAMECHANGED
+            # | SWP_SHOWWINDOW = 0x60; SWP_NOZORDER 0x4 when restoring.
+            $buffer = [Runtime.InteropServices.Marshal]::AllocHGlobal(40)
+            try {
+                if ($Enabled) {
+                    if (-not $this.GetWindowRectCall.DynamicInvoke($this.Hwnd, $buffer)) { throw 'GetWindowRect failed.' }
+                    $left = [Runtime.InteropServices.Marshal]::ReadInt32($buffer, 0)
+                    $top = [Runtime.InteropServices.Marshal]::ReadInt32($buffer, 4)
+                    $this.SavedBounds = @($left, $top,
+                        ([Runtime.InteropServices.Marshal]::ReadInt32($buffer, 8) - $left),
+                        ([Runtime.InteropServices.Marshal]::ReadInt32($buffer, 12) - $top))
+                    $this.SavedStyle = [IntPtr]$this.GetWindowLongCall.DynamicInvoke($this.Hwnd, [int32]-16)
+                    [Runtime.InteropServices.Marshal]::WriteInt32($buffer, 0, 40)
+                    $monitor = [IntPtr]$this.MonitorFromWindowCall.DynamicInvoke($this.Hwnd, [uint32]2)
+                    if (-not $this.GetMonitorInfoCall.DynamicInvoke($monitor, $buffer)) { throw 'GetMonitorInfoW failed.' }
+                    $left = [Runtime.InteropServices.Marshal]::ReadInt32($buffer, 4)
+                    $top = [Runtime.InteropServices.Marshal]::ReadInt32($buffer, 8)
+                    $bounds = @($left, $top,
+                        ([Runtime.InteropServices.Marshal]::ReadInt32($buffer, 12) - $left),
+                        ([Runtime.InteropServices.Marshal]::ReadInt32($buffer, 16) - $top))
+                    $style = [IntPtr]::new(0x90000000L)
+                    $flags = [uint32]0x60
+                } else {
+                    $bounds = $this.SavedBounds
+                    $style = $this.SavedStyle
+                    $flags = [uint32]0x64
+                }
+                $this.Fullscreen = $Enabled
+                [void]$this.SetWindowLongCall.DynamicInvoke($this.Hwnd, [int32]-16, $style)
+                if (-not $this.SetWindowPosCall.DynamicInvoke($this.Hwnd, [IntPtr]::Zero,
+                    [int32]$bounds[0], [int32]$bounds[1], [int32]$bounds[2], [int32]$bounds[3], $flags)) {
+                    throw 'SetWindowPos failed.'
+                }
+            } finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($buffer) }
+        }.GetNewClosure())
 
         $instance | Add-Member ScriptMethod Show ({
             [void]$this.ShowWindowCall.DynamicInvoke($this.Hwnd, [int32]5)
@@ -306,7 +374,13 @@ $Window = & {
 
         $instance | Add-Member ScriptMethod Run ({
             param([scriptblock]$OnInput)
+            # GetMessageW blocks until a message arrives; there is no timeout.
+            # Worker threads wake this loop with PostMessageW in the WM_APP
+            # range (0x8000-0xBFFF), delivered as Kind 'Notify'. Client size
+            # is compared after each dispatched message and reported as
+            # 'Resize'; the native modal move/size loop runs inside dispatch.
             $message = [Runtime.InteropServices.Marshal]::AllocHGlobal(48)
+            $clientSize = $this.GetClientSize()
             try {
                 $this.Alive = [bool]$this.IsWindowCall.DynamicInvoke($this.Hwnd)
                 while ($this.Alive) {
@@ -327,12 +401,28 @@ $Window = & {
                             $inputEvent=[pscustomobject]@{Kind='PointerDown';Button='Left'}
                         } elseif ($messageId -eq 0x0202) {
                             $inputEvent=[pscustomobject]@{Kind='PointerUp';Button='Left'}
+                        } elseif ([Runtime.InteropServices.Marshal]::ReadIntPtr($message,0) -ne $this.Hwnd) {
+                            # Timers and notifications count only when addressed to this
+                            # window; renderers create their own windows and timers on this thread.
+                        } elseif ($messageId -eq 0x0113) {
+                            $inputEvent=[pscustomobject]@{Kind='Timer';TimerId=[Runtime.InteropServices.Marshal]::ReadInt64($message,16)}
+                        } elseif ($messageId -ge 0x8000 -and $messageId -le 0xBFFF) {
+                            $inputEvent=[pscustomobject]@{Kind='Notify';Message=[uint32]$messageId
+                                WParam=[Runtime.InteropServices.Marshal]::ReadInt64($message,16)
+                                LParam=[Runtime.InteropServices.Marshal]::ReadInt64($message,24)}
                         }
                         if ($inputEvent) { $null=& $OnInput $inputEvent }
                     }
                     [void]$this.TranslateMessageCall.DynamicInvoke($message)
                     [void]$this.DispatchMessageCall.DynamicInvoke($message)
                     $this.Alive = [bool]$this.IsWindowCall.DynamicInvoke($this.Hwnd)
+                    if ($OnInput -and $this.Alive) {
+                        $size = $this.GetClientSize()
+                        if ($size[0] -ne $clientSize[0] -or $size[1] -ne $clientSize[1]) {
+                            $clientSize = $size
+                            $null=& $OnInput ([pscustomobject]@{Kind='Resize';Width=$size[0];Height=$size[1]})
+                        }
+                    }
                 }
             }
             finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($message) }

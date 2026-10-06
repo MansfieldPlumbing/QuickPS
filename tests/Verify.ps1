@@ -10,7 +10,7 @@ if ($MyInvocation.InvocationName -eq '.') {
 $ErrorActionPreference = 'Stop'
 $allowedSystemDlls = [Collections.Generic.HashSet[string]]::new(
     [string[]]@(
-        'advapi32.dll', 'avrt.dll', 'd2d1.dll', 'd3d11.dll', 'd3d12.dll',
+        'advapi32.dll', 'avrt.dll', 'cfgmgr32.dll', 'd2d1.dll', 'd3d11.dll', 'd3d12.dll',
         'd3dcompiler_47.dll', 'dcomp.dll', 'dwmapi.dll', 'dwrite.dll', 'dxgi.dll',
         'gdi32.dll', 'kernel32.dll', 'mf.dll', 'mfplat.dll', 'mfreadwrite.dll',
         'mmdevapi.dll', 'ole32.dll', 'propsys.dll', 'shcore.dll',

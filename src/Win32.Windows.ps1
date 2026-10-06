@@ -101,7 +101,9 @@ $Native = & {
         for ($index = 0; $index -lt $Arguments.Count; $index++) {
             $argument = $Arguments[$index]
             if ($argument -is [Management.Automation.PSObject]) {
-                $argument = $argument.BaseObject
+                # The intrinsic member unwraps; $argument.BaseObject resolves
+                # against the wrapped value and yields $null for an IntPtr.
+                $argument = $argument.PSObject.BaseObject
             }
             $invokeArguments[$index + 1] = $argument
         }

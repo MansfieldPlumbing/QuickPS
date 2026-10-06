@@ -14,6 +14,18 @@
             Status = 'Native lifecycle checks available; visual acceptance separate'
         }
         @{
+            Id = 'video-in'
+            Title = 'Video capture input viewer'
+            Description = 'Show a camera or USB HDMI capture input with its matching audio; Media Foundation renders natively and the script waits only on window messages.'
+            Script = 'VideoIn.ps1'
+            Launcher = 'VideoIn.cmd'
+            Source = '../src/MediaSession.Windows.ps1'
+            Verification = 'VideoIn.ps1'
+            VerificationArguments = @('-Verify')
+            Platform = 'Windows x64; PowerShell 7; Media Foundation; QuickPS.MediaSessionEvents.dll'
+            Status = 'Renderer frame statistics checked with an attached input; visual acceptance separate'
+        }
+        @{
             Id = 'typography'
             Title = 'Direct2D drawing and DirectWrite text'
             Description = 'Render colored geometry and Unicode text in a native window.'
@@ -55,7 +67,7 @@
             Description = 'Event-driven managed WASAPI capture, native peak meter, pause, asynchronous Stop and normalization.'
             Script = 'SoundRecorder.ps1'
             Launcher = 'SoundRecorder.cmd'
-            Source = '../src/managed/Windows.ps1'
+            Source = '../src/managed/AudioCapture.ps1'
             Verification = 'SoundRecorder.ps1'
             VerificationArguments = @('-Verify')
             Platform = 'Windows x64; PowerShell 7; WASAPI and DWM Mica Alt'

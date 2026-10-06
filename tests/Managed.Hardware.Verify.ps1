@@ -1,10 +1,10 @@
 [CmdletBinding()]
-param([string]$AssemblyPath=(Join-Path $PSScriptRoot '..\build\managed\QuickPS.Windows.dll'),[string]$TracePath)
+param([string]$AssemblyPath=(Join-Path $PSScriptRoot '..\build\managed\QuickPS.AudioCapture.dll'),[string]$TracePath)
 $ErrorActionPreference='Stop'
 $temporary=Join-Path ([IO.Path]::GetTempPath()) ('QuickPS-Audio-'+[Guid]::NewGuid().ToString('N'))
 $null=[IO.Directory]::CreateDirectory($temporary)
 $assembly=[Runtime.Loader.AssemblyLoadContext]::Default.LoadFromAssemblyPath([IO.Path]::GetFullPath($AssemblyPath))
-$native=$assembly.GetType('QuickPSWindows',$true)
+$native=$assembly.GetType('QuickPSAudioInterop',$true)
 $wait=$native.GetMethod('WaitOne')
 try {
     $worker=& (Join-Path $PSScriptRoot '..\src\Capture.Windows.ps1') -AssemblyPath $AssemblyPath -OutputPath (Join-Path $temporary 'loopback.wav') -Loopback -Normalize

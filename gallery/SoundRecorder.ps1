@@ -2,7 +2,7 @@
 param(
     [ValidateSet('Mic','Apps')][string]$Source='Mic',
     [string]$OutputDirectory=(Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::MyMusic)) 'Recordings'),
-    [string]$AssemblyPath=$(if(Test-Path (Join-Path $PSScriptRoot '..\lib\QuickPS.Windows.dll')){Join-Path $PSScriptRoot '..\lib\QuickPS.Windows.dll'}else{Join-Path $PSScriptRoot '..\build\managed\QuickPS.Windows.dll'}),
+    [string]$AssemblyPath=$(if(Test-Path (Join-Path $PSScriptRoot '..\lib\QuickPS.AudioCapture.dll')){Join-Path $PSScriptRoot '..\lib\QuickPS.AudioCapture.dll'}else{Join-Path $PSScriptRoot '..\build\managed\QuickPS.AudioCapture.dll'}),
     [switch]$NoNormalize,
     [string]$ScreenshotPath,
     [switch]$Verify

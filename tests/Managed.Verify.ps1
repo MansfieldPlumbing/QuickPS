@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([string]$AssemblyPath=(Join-Path $PSScriptRoot '..\build\managed\QuickPS.Windows.dll'))
+param([string]$AssemblyPath=(Join-Path $PSScriptRoot '..\build\managed\QuickPS.AudioCapture.dll'))
 $ErrorActionPreference='Stop'
 $assembly=[Runtime.Loader.AssemblyLoadContext]::Default.LoadFromAssemblyPath([IO.Path]::GetFullPath($AssemblyPath))
 foreach($reference in $assembly.GetReferencedAssemblies()){
@@ -30,7 +30,7 @@ try {
         if(-not $worker.Thread.Join(5000) -or $worker.GetStatus() -ne 5){throw 'Failed output creation did not complete with failure.'}
     }finally{$worker.Dispose()}
     $wave=$assembly.GetType('QuickPSWave',$true)
-    $native=$assembly.GetType('QuickPSWindows',$true)
+    $native=$assembly.GetType('QuickPSAudioInterop',$true)
     $guidPointer=$native.GetMethod('GuidMemory').Invoke($null,@('9503DEBC2FE57C468E3DC4579291692E'))
     try{
         $actual=[byte[]]::new(16);[Runtime.InteropServices.Marshal]::Copy($guidPointer,$actual,0,16)
@@ -41,9 +41,10 @@ try {
     [Buffer]::BlockCopy([BitConverter]::GetBytes([uint16]65534),0,$extensible,0,2)
     [Buffer]::BlockCopy([BitConverter]::GetBytes([uint16]32),0,$extensible,14,2)
     [Buffer]::BlockCopy(([Guid]'00000003-0000-0010-8000-00aa00389b71').ToByteArray(),0,$extensible,24,16)
-    if($wave.GetMethod('SampleSize').Invoke($null,@($extensible)) -ne 4){throw 'Extensible float subtype not recognized.'}
+    # @(,$array) passes the byte array as one argument; @($array) would unroll it.
+    if($wave.GetMethod('SampleSize').Invoke($null,@(,$extensible)) -ne 4){throw 'Extensible float subtype not recognized.'}
     $extensible[24]=1
-    if($wave.GetMethod('SampleSize').Invoke($null,@($extensible)) -ne 0){throw 'PCM32 misidentified as IEEE float.'}
+    if($wave.GetMethod('SampleSize').Invoke($null,@(,$extensible)) -ne 0){throw 'PCM32 misidentified as IEEE float.'}
     $worker=& (Join-Path $PSScriptRoot '..\src\Capture.Windows.ps1') -AssemblyPath $AssemblyPath -OutputPath (Join-Path $temp 'nonempty.wav') -Synthetic -Normalize
     try {
         $worker.SyntheticBytes=[byte[]]::new(96000)

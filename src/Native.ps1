@@ -99,7 +99,11 @@ $Native = & {
         for ($index = 0; $index -lt $Arguments.Count; $index++) {
             $argument = $Arguments[$index]
             if ($argument -is [Management.Automation.PSObject]) {
-                $argument = $argument.BaseObject
+                # $argument.BaseObject resolves against the wrapped value (an
+                # IntPtr has no such member) and yields $null, which reaches
+                # native code as a null pointer. The intrinsic PSObject member
+                # always unwraps to the ABI value.
+                $argument = $argument.PSObject.BaseObject
             }
             $invokeArguments[$index + 1] = $argument
         }
